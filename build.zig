@@ -4,17 +4,17 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
-    const mod = b.addModule("server", .{
-        .root_source_file = b.path("src/root.zig"),
-        .optimize = optimize,
-        .target = target,
-    });
+    // const mod = b.addModule("lib", .{
+    //     .root_source_file = b.path("src/root.zig"),
+    //     .optimize = optimize,
+    //     .target = target,
+    // });
 
     const wrapper_mod = b.dependency("libchromaprint", .{
         .target = target,
         .optimize = optimize,
     }).module("wrapper");
-    mod.addImport("chromaprint", wrapper_mod);
+    // mod.addImport("chromaprint", wrapper_mod);
 
     const exe = b.addExecutable(.{
         .name = "music",
@@ -24,7 +24,8 @@ pub fn build(b: *std.Build) void {
             .target = target,
         }),
     });
-    exe.root_module.addImport("lib", mod);
+    // exe.root_module.addImport("lib", mod);
+    exe.root_module.addImport("chromaprint", wrapper_mod);
 
     b.installArtifact(exe);
 
@@ -39,10 +40,10 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    const mod_tests = b.addRunArtifact(b.addTest(.{ .root_module = mod }));
+    // const mod_tests = b.addRunArtifact(b.addTest(.{ .root_module = mod }));
     const exe_tests = b.addRunArtifact(b.addTest(.{ .root_module = exe.root_module }));
 
     const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&mod_tests.step);
+    // test_step.dependOn(&mod_tests.step);
     test_step.dependOn(&exe_tests.step);
 }

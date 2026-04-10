@@ -1,105 +1,107 @@
 const std = @import("std");
 const http = std.http;
 const Io = std.Io;
+const mem = std.mem;
+const fmt = std.fmt;
+const json = std.json;
+const Uri = std.Uri;
 
+const Allocator = mem.Allocator;
 const expectEqualDeep = std.testing.expectEqualDeep;
 
-const chromaprint = @import("../root.zig").chromaprint;
-
 const url = @import("url.zig");
-
+const chromaprint = @import("../root.zig").chromaprint;
 const music_brainz = @import("music_brainz.zig");
+
+const log = std.log.scoped(.acoustid);
 
 pub const ID = [36:0]u8;
 
-pub const Status = enum {
-    lookup,
-    submit,
-    submission_status,
-    @"error",
-};
+pub const default_user_agent = "curl/8.7.1";
 
-pub const Response = union(Status) {
-    lookup: Lookup,
-    submit: Submit,
-    submission_status: SubmissionStatus,
-    @"error": Error,
-
-    // {
-    //   "status": "ok",
-    //   "results": [
-    //     {
-    //       "id": "893796d1-419b-4654-8c01-f51b9e075e0c",
-    //       "score": 0.985,
-    //       "recordings": [
-    //         {
-    //           "id": "70c17f8d-6401-4475-87f5-20786520b991",
-    //           "title": "Stairway to Heaven",
-    //           "artists": [{"id": "678d9611-557c-4541-99ad-45cae2030f82", "name": "Led Zeppelin"}]
-    //         }
-    //       ]
-    //     }
-    //   ]
-    // }
-    pub const Lookup = struct {
-        results: []Result,
-
-        pub const Result = struct {
-            id: ID,
-            score: f32,
-            recordings: []Recording,
-
-            pub const Recording = struct {
-                id: music_brainz.ID,
-                title: []const u8,
-                artists: []Artist,
-
-                pub const Artist = struct {
-                    id: ID,
-                    name: []const u8,
-                };
-            };
-        };
-    };
-
-    // {
-    //   "status": "ok",
-    //   "submissions": [
-    //     {
-    //       "id": 12345678,
-    //       "status": "pending"
-    //     }
-    //   ]
-    // }
-    pub const Submit = struct {
-    };
-
-    //     {
-    //   "status": "ok",
-    //   "submissions": [{
-    //     "id": 123456789,
-    //     "status": "imported",
-    //     "result": {
-    //       "id": "9ff43b6a-4f16-427c-93c2-92307ca505e0"
-    //     }
-    //   }, {
-    //     "id": 123456790,
-    //     "status": "pending"
-    //   }]
-    // }
-    pub const SubmissionStatus = struct {
-    };
-
-    // {"error": {"code": 2, "message": "missing required parameter \"client\""}, "status": "error"}
-    pub const Error = struct {
-        code: i32,
-        message: []const u8,
-    };
-};
+// pub const Response = union(Status) {{{{
+//     lookup: Lookup,
+//     submit: Submit,
+//     submission_status: SubmissionStatus,
+//     @"error": Error,
+//
+//     // {
+//     //   "status": "ok",
+//     //   "results": [
+//     //     {
+//     //       "id": "893796d1-419b-4654-8c01-f51b9e075e0c",
+//     //       "score": 0.985,
+//     //       "recordings": [
+//     //         {
+//     //           "id": "70c17f8d-6401-4475-87f5-20786520b991",
+//     //           "title": "Stairway to Heaven",
+//     //           "artists": [{"id": "678d9611-557c-4541-99ad-45cae2030f82", "name": "Led Zeppelin"}]
+//     //         }
+//     //       ]
+//     //     }
+//     //   ]
+//     // }
+//     pub const Lookup = struct {
+//         results: []Result,
+//
+//         pub const Result = struct {
+//             id: ID,
+//             score: f32,
+//             recordings: []Recording,
+//
+//             pub const Recording = struct {
+//                 id: music_brainz.ID,
+//                 title: []const u8,
+//                 artists: []Artist,
+//
+//                 pub const Artist = struct {
+//                     id: ID,
+//                     name: []const u8,
+//                 };
+//             };
+//         };
+//     };
+//
+//     // {
+//     //   "status": "ok",
+//     //   "submissions": [
+//     //     {
+//     //       "id": 12345678,
+//     //       "status": "pending"
+//     //     }
+//     //   ]
+//     // }
+//     pub const Submit = struct {
+//     };
+//
+//     //     {
+//     //   "status": "ok",
+//     //   "submissions": [{
+//     //     "id": 123456789,
+//     //     "status": "imported",
+//     //     "result": {
+//     //       "id": "9ff43b6a-4f16-427c-93c2-92307ca505e0"
+//     //     }
+//     //   }, {
+//     //     "id": 123456790,
+//     //     "status": "pending"
+//     //   }]
+//     // }
+//     pub const SubmissionStatus = struct {
+//     };
+//
+//     // {"error": {"code": 2, "message": "missing required parameter \"client\""}, "status": "error"}
+//     pub const Error = struct {
+//         code: i32,
+//         message: []const u8,
+//     };
+// };}}}
 
 // API {{{
 pub const base_url = "https://api.acoustid.org/v2";
+pub const base_uri = Uri.parse(base_url) catch unreachable;
 
+// lookup {{{
 pub const Metadata = enum {
     recordings, 
     recordingids,
@@ -115,6 +117,73 @@ pub const Metadata = enum {
 
 pub const lookup = "lookup";
 pub const lookup_url = base_url ++ "/" ++ lookup;
+pub const lookup_uri = Uri.parse(lookup_url) catch unreachable;
+
+pub const LookupResponse = struct {
+    results: ?[]Result = null,
+    @"error": ?Error = null,
+    status: Status = .@"error",
+
+    pub const Status = enum {
+        ok,
+        @"error",
+    };
+
+    pub const Error = struct {
+        code: u32,
+        message: []const u8,
+    };
+
+    pub const Result = struct {
+        id: ID,
+        recordings: []Recording,
+        score: f64,
+    };
+
+    pub const Recording = struct {
+        id: ID,
+        releasegroups: []ReleaseGroup,
+        sources: u32,
+    };
+
+    pub const ReleaseGroup = struct {
+        id: ID,
+        releases: []Release,
+    };
+
+    pub const Release = struct {
+        id: ID,
+        mediums: []Medium,
+    };
+
+    pub const Medium = struct {
+        format: Format,
+        position: u32,
+        track_count: u32,
+        tracks: []Track,
+
+        pub const Format = enum {
+            CD,
+            Vinyl,
+            @"12\" Vinyl",
+            @"Digital Media",
+            @"Copy Control CD",
+            other, 
+        };
+    };
+
+    pub const Track = struct {
+        id: ID,
+        position: i32,
+        title: []const u8,
+        artists: []Artist,
+    };
+
+    pub const Artist = struct {
+        id: ID,
+        name: []const u8,
+    };
+};
 
 // lookup by fingerprint {{{
 pub const LookupByFingerprintOptions = struct {
@@ -131,12 +200,48 @@ pub const LookupByFingerprintOptions = struct {
     meta: ?[]const Metadata = null,
 };
 
-pub const lookup_by_fingerprint_base_url = "https://api.acoustid.org/v2/lookup";
+pub const LookupByFingerpintError = http.Client.ConnectError 
+    || http.Client.FetchError 
+    || json.ParseFromValueError 
+    || json.Error
+    || error{BufferUnderrun,ValueTooLong};
 
-pub fn lookupByFingerprint() void {
+pub fn lookupByFingerprint(client: *http.Client, allocator: Allocator, opts: LookupByFingerprintOptions) LookupByFingerpintError!json.Parsed(LookupResponse) {
+    var payload = try url.fmtUrlAlloc(allocator, null, opts);
+    defer payload.deinit(allocator);
+
+    var body_writer: Io.Writer.Allocating = .init(allocator);
+    defer body_writer.deinit();
+
+    const fetch_res = try client.fetch(.{ 
+        .location = .{ .uri = lookup_uri },
+        // .location = .{ .uri = .{ .host = .{ .raw = "localhost" }, .port = 8080, .path = lookup_uri.path, .scheme = "http" } },
+        .method = .POST,
+        .response_writer = &body_writer.writer,
+        .payload = payload.items,
+        .headers = .{ 
+            .content_type = .{ .override = "application/x-www-form-urlencoded" },
+            .user_agent = .{ .override = default_user_agent },
+            .connection = .omit,
+        },
+    });
+
+    log.info("acoustid response status: {t}", .{fetch_res.status});
+
+    var res_body = body_writer.writer.toArrayList();
+    defer res_body.deinit(allocator);
+
+    log.info("response: {s}", .{res_body.items});
+
+    return json.parseFromSlice(LookupResponse, allocator, res_body.items, .{ 
+        .duplicate_field_behavior = .use_last,
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
 }
 // }}}
 
+// TODO
 // lookup by track id {{{
 pub const LookupByTrackIDOptions = struct {
     format: ?enum{json, jsonp, xml} = null,
@@ -153,7 +258,9 @@ pub const LookupByTrackIDOptions = struct {
 pub fn lookupByTrackID() void {
 }
 // }}}
+// }}}
 
+// TODO
 // submit {{{
 pub const submit = "submit";
 pub const submit_url = base_url ++ "/" ++ submit;
@@ -218,7 +325,7 @@ pub const SubmitOptions = struct {
 
 test {
     const gpa = std.testing.allocator;
-    var url1 = try url.fmtUrl(gpa, "", SubmitOptions{
+    var url1 = try url.fmtUrlAlloc(gpa, "", SubmitOptions{
         .client = "<client>",
         .user = "<user>",
         .clientversion = "1.0",
@@ -236,6 +343,7 @@ test {
 }
 // }}}
 
+// TODO
 // submission status {{{
 pub const submission_status = "submission_status";
 pub const submission_status_url = base_url ++ "/" ++ submission_status;
@@ -256,7 +364,7 @@ pub const SubmissionStatusOptions = struct {
 
 test {
     const gpa = std.testing.allocator;
-    var url1 = try url.fmtUrl(gpa, "", SubmissionStatusOptions{
+    var url1 = try url.fmtUrlAlloc(gpa, "", SubmissionStatusOptions{
         .client = "<client>",
         .id = &.{1, 2, 3},
         .clientversion = "1.0",
@@ -267,6 +375,11 @@ test {
 // }}}
 
 // }}}
+pub const env_acoustid_api_key_key = "ACOUSTID_API_KEY";
+
+pub fn getClientAPIKey(environ_map: *std.process.Environ.Map) ?[]const u8 {
+    return environ_map.get(env_acoustid_api_key_key);
+}
 
 test {
     std.testing.refAllDecls(@This());

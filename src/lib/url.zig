@@ -35,6 +35,22 @@ pub const KeyFmtToken = union(enum) {
     }
 };
 
+pub const UrlQueryDelimiter = enum(u8) {
+    first = '?',
+    seperator = '&',
+    none,
+
+    pub fn format(
+        self: @This(),
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        switch (self) {
+            .first, .seperator => |c| try writer.writeByte(@intFromEnum(c)),
+            else => {},
+        }
+    }
+};
+
 // fmtUrl {{{
 /// Will format the url query.
 ///
@@ -63,7 +79,7 @@ pub const KeyFmtToken = union(enum) {
 ///         },              // &names.0=<name1>&names.1=<name2>&...
 ///     };
 /// }
-pub fn fmtUrl(allocator: Allocator, comptime base_url: []const u8, opts: anytype) error{OutOfMemory}!ArrayList(u8) {
+pub fn fmtUrlAlloc(allocator: Allocator, comptime base_url: ?[]const u8, opts: anytype) error{OutOfMemory}!ArrayList(u8) {
     // TODO: check for valid strings
     const OptsType = @TypeOf(opts);
     comptime {
@@ -71,8 +87,10 @@ pub fn fmtUrl(allocator: Allocator, comptime base_url: []const u8, opts: anytype
     }
 
     var buf: ArrayList(u8) = .empty;
-    try buf.ensureTotalCapacity(allocator, base_url.len + @sizeOf(OptsType));
-    buf.printAssumeCapacity(base_url, .{});
+    try buf.ensureTotalCapacity(allocator, (if (base_url) |u| u.len else 0) + @sizeOf(OptsType));
+    if (base_url) |payload| {
+        buf.printAssumeCapacity(payload, .{});
+    }
 
     const opts_info = @typeInfo(OptsType).@"struct";
 
@@ -88,7 +106,12 @@ pub fn fmtUrl(allocator: Allocator, comptime base_url: []const u8, opts: anytype
     };
     
     inline for (opts_info.fields) |field| {
-        const delimiter: u8 = if (first) '?' else '&';
+        const delimiter: UrlQueryDelimiter = if (base_url == null and first) 
+                .none
+            else if (first) 
+                .first 
+            else 
+                .seperator;
 
         if (try appendToUrl(allocator, &buf, field.name, @field(opts, field.name), delimiter, formats)) {
             first = false;
@@ -99,7 +122,7 @@ pub fn fmtUrl(allocator: Allocator, comptime base_url: []const u8, opts: anytype
 }
 
 // test fmtUrl {{{
-test fmtUrl {
+test fmtUrlAlloc {
     const gpa = std.testing.allocator;
 
     const TestStruct = struct {
@@ -110,15 +133,15 @@ test fmtUrl {
         meta: ?[]const enum {recordings, recordingids, releases} = null,
     };
     
-    var url1 = try fmtUrl(gpa, "", TestStruct{
+    var url1 = try fmtUrlAlloc(gpa, null, TestStruct{
         .client = "<client_str>",
         .duration = 123,
         .fingerprint = "<fingerprint>",
     });
     defer url1.deinit(gpa);
-    try expectEqualDeep("?client=<client_str>&duration=123&fingerprint=<fingerprint>", url1.items);
+    try expectEqualDeep("client=<client_str>&duration=123&fingerprint=<fingerprint>", url1.items);
     
-    var url2 = try fmtUrl(gpa, "", TestStruct{
+    var url2 = try fmtUrlAlloc(gpa, null, TestStruct{
         .client = "<client_str>",
         .duration = 123,
         .fingerprint = "<fingerprint>",
@@ -126,9 +149,9 @@ test fmtUrl {
         .meta = &.{}
     });
     defer url2.deinit(gpa);
-    try expectEqualDeep("?format=json&client=<client_str>&duration=123&fingerprint=<fingerprint>&meta=", url2.items);
+    try expectEqualDeep("format=json&client=<client_str>&duration=123&fingerprint=<fingerprint>&meta=", url2.items);
     
-    var url3 = try fmtUrl(gpa, "", TestStruct{
+    var url3 = try fmtUrlAlloc(gpa, "", TestStruct{
         .client = "<client_str>",
         .duration = 123,
         .fingerprint = "<fingerprint>",
@@ -157,7 +180,7 @@ test fmtUrl {
             },
         };
     };
-    var url4 = try fmtUrl(gpa, "", Advanced1{
+    var url4 = try fmtUrlAlloc(gpa, "", Advanced1{
         .durations = &.{
             123,
             456,
@@ -191,7 +214,7 @@ test fmtUrl {
             return ~@as(i32, @intCast(i));
         }
     };
-    var url5 = try fmtUrl(gpa, "", Advanced2{
+    var url5 = try fmtUrlAlloc(gpa, "", Advanced2{
         .durations = &.{
             -123,
             456,
@@ -208,7 +231,7 @@ pub fn appendToUrl(
     buf: *ArrayList(u8),
     comptime name: []const u8,
     value: anytype,
-    delimiter: u8,
+    delimiter: UrlQueryDelimiter,
     comptime formats: ?[]const UrlFormat
 ) error{OutOfMemory}!bool {
     switch (@typeInfo(@TypeOf(value))) {
@@ -222,7 +245,7 @@ pub fn appendToUrl(
             }
         },
         .pointer => |info| switch (info.size) {
-            .one => try buf.print(allocator, "{c}" ++ name ++ "={" ++ getFormatter(info.child) ++ "}", .{delimiter, value.*}),
+            .one => try buf.print(allocator, "{f}" ++ name ++ "={" ++ getFormatter(info.child) ++ "}", .{delimiter, value.*}),
             .slice => return fmtUrlSlice(allocator, buf, name, value, delimiter, formats),
             .many, .c => @compileError("'appendToUrl' not implemented for pointers of size `.many` or `.c`"),
         },
@@ -241,9 +264,9 @@ pub fn appendToUrl(
         .vector => |info| {
             return fmtUrlSlice(allocator, buf, name, (&@as([info.len]info.child, value))[0..], delimiter, formats);
         },
-        .bool => try buf.print(allocator, "{c}" ++ name ++ "={}", .{delimiter, value}),
-        .int, .float, .comptime_int, .comptime_float => try buf.print(allocator, "{c}" ++ name ++ "={d}", .{delimiter, value}),
-        .error_set, .@"enum", .enum_literal => try buf.print(allocator, "{c}" ++ name ++ "={t}", .{delimiter, value}),
+        .bool => try buf.print(allocator, "{f}" ++ name ++ "={}", .{delimiter, value}),
+        .int, .float, .comptime_int, .comptime_float => try buf.print(allocator, "{f}" ++ name ++ "={d}", .{delimiter, value}),
+        .error_set, .@"enum", .enum_literal => try buf.print(allocator, "{f}" ++ name ++ "={t}", .{delimiter, value}),
         .null => return false,
         else => @compileError("'appendToUrl' not implemented for type '" ++ @typeName(@TypeOf(value)) ++ "'"),
     }
@@ -255,7 +278,7 @@ pub fn fmtUrlSlice(
     buf: *ArrayList(u8),
     comptime name: []const u8,
     value: anytype,
-    delimiter: u8,
+    delimiter: UrlQueryDelimiter,
     comptime formats: ?[]const UrlFormat,
 ) error{OutOfMemory}!bool {
     const info = @typeInfo(@TypeOf(value));
@@ -264,13 +287,13 @@ pub fn fmtUrlSlice(
     const formatter = getFormatter(info.pointer.child);
 
     if (info.pointer.child == u8) {
-        try buf.print(allocator, "{c}" ++ name ++ "={s}", .{delimiter, value});
+        try buf.print(allocator, "{f}" ++ name ++ "={s}", .{delimiter, value});
         return true;
     } else if (formats) |fmts| {
         inline for (fmts) |format| {
             if (mem.eql(u8, format.field, name)) {
                 if (format.array_delimiter) |arr_delimiter| {
-                    try buf.print(allocator, "{c}" ++ name ++ "=", .{delimiter});
+                    try buf.print(allocator, "{f}" ++ name ++ "=", .{delimiter});
                     var f: bool = true;
                     for (value) |v| {
                         if (f) {
@@ -281,11 +304,11 @@ pub fn fmtUrlSlice(
                         }
                     }
                 } else {
-                    var current_delimiter: u8 = delimiter;
+                    var current_delimiter: UrlQueryDelimiter = delimiter;
                     for (value, 0..) |v, i| {
                         const V = @TypeOf(v);
                         if (@typeInfo(V) == .optional and v == null) continue;
-                        comptime var literal: []const u8 = "{c}";
+                        comptime var literal: []const u8 = "{f}";
                         comptime var index_fn: [10]?*const fn (usize) i32 = undefined;
                         comptime var index_fn_at_index: [10]usize = undefined;
                         comptime var index_fn_count = 0;
@@ -306,7 +329,7 @@ pub fn fmtUrlSlice(
 
                         comptime var print_arg_types: [12]type = undefined;
                         comptime var print_arg_types_len = 1;
-                        print_arg_types[0] = u8;
+                        print_arg_types[0] = UrlQueryDelimiter;
                         inline for (0..index_fn_count) |_| {
                             print_arg_types[print_arg_types_len] = i32;
                             print_arg_types_len += 1;
@@ -324,7 +347,7 @@ pub fn fmtUrlSlice(
                         args[print_arg_types_len-1] = v;
 
                         try buf.print(allocator, literal ++ "={" ++ formatter ++ "}", args);
-                        if (current_delimiter == '?') current_delimiter = '&';
+                        if (current_delimiter != .seperator) current_delimiter = .seperator;
                      }
                 }
                 return true;
@@ -332,7 +355,7 @@ pub fn fmtUrlSlice(
         }
     } 
 
-    try buf.print(allocator, "{c}" ++ name ++ "=", .{delimiter});
+    try buf.print(allocator, "{f}" ++ name ++ "=", .{delimiter});
     var f: bool = true;
     for (value) |v| {
         if (f) {
