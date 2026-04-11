@@ -10,7 +10,7 @@ const Allocator = mem.Allocator;
 const expectEqualDeep = std.testing.expectEqualDeep;
 
 const url = @import("url.zig");
-const chromaprint = @import("../root.zig").chromaprint;
+const chromaprint = @import("chromaprint");
 const music_brainz = @import("music_brainz.zig");
 
 const log = std.log.scoped(.acoustid);
@@ -96,6 +96,85 @@ pub const default_user_agent = "curl/8.7.1";
 //         message: []const u8,
 //     };
 // };}}}
+
+// database {{{
+pub const TableOptions = struct {
+    results: []const u8 = "acoustid.results",
+    recordings: []const u8 = "acoustid.recordings",
+    results_to_recordings: []const u8 = "acoustid.results_recordings",
+    release_groups: []const u8 = "acoustid.release_groups",
+    recordings_to_release_groups: []const u8 = "acoustid.recordings_release_groups",
+    releases: []const u8 = "acoustid.releases",
+    mediums: []const u8 = "acoustid.mediums",
+    tracks: []const u8 = "acoustid.tracks",
+    artists: []const u8 = "acoustid.artists",
+    tracks_to_artists: []const u8 = "acoustid.tracks_artists",
+};
+
+pub fn generateFullSchema(comptime opts: TableOptions) []const u8 {
+    return 
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.results ++ \\ (key INTEGER PRIMARY KEY, id VARCHAR(36) NOT NULL, score REAL NOT NULL);
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.recordings ++ \\ (key INTEGER PRIMARY KEY, id VARCHAR(36) NOT NULL, sources INTEGER NOT NULL);
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.release_groups ++ \\ (key INTEGER PRIMARY KEY, id VARCHAR(36) NOT NULL);
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.artists ++ \\ (key INTEGER PRIMARY KEY, id VARCHAR(36) NOT NULL, name TEXT NOT NULL);
+        
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.releases ++ \\ (
+        \\    key INTEGER PRIMARY KEY, 
+        \\    id VARCHAR(36) NOT NULL, 
+        \\    release_group_key INTEGER NOT NULL REFERENCES 
+            ++ opts.release_groups ++ \\(key)
+        \\);
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.mediums ++ \\ (
+        \\    key INTEGER PRIMARY KEY,
+        \\    format TEXT NOT NULL,
+        \\    position INTEGER NOT NULL,
+        \\    track_count INTEGER NOT NULL,
+        \\    release_key INTEGER NOT NULL REFERENCES 
+            ++ opts.releases ++ \\(key)
+        \\);
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.tracks ++ \\ (
+        \\    key INTEGER PRIMARY KEY,
+        \\    id VARCHAR(36) NOT NULL,
+        \\    position INTEGER NOT NULL,
+        \\    title TEXT NOT NULL,
+        \\    medium_key INTEGER NOT NULL REFERENCES 
+            ++ opts.mediums ++ \\(key)
+        \\);
+
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.results_to_recordings ++ \\ (
+        \\    result_key INTEGER REFERENCES 
+            ++ opts.results ++ \\(key),
+        \\    recording_key INTEGER REFERENCES 
+            ++ opts.recordings ++ \\(key),
+        \\    PRIMARY KEY (result_key, recording_key)
+        \\);
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.recordings_to_release_groups ++ \\ (
+        \\    recording_key INTEGER REFERENCES 
+            ++ opts.recordings ++ \\(key),
+        \\    release_group_key INTEGER REFERENCES 
+            ++ opts.release_groups ++ \\(key),
+        \\    PRIMARY KEY (recording_key, release_group_key)
+        \\);
+        \\CREATE TABLE IF NOT EXISTS 
+            ++ opts.tracks_to_artists ++ \\ (
+        \\    track_key INTEGER REFERENCES 
+            ++ opts.tracks ++ \\(key),
+        \\    artist_key INTEGER REFERENCES 
+            ++ opts.artists ++ \\(key),
+        \\    PRIMARY KEY (track_key, artist_key)
+        \\);
+    ;
+}
+// }}}
 
 // API {{{
 pub const base_url = "https://api.acoustid.org/v2";
@@ -375,6 +454,7 @@ test {
 // }}}
 
 // }}}
+
 pub const env_acoustid_api_key_key = "ACOUSTID_API_KEY";
 
 pub fn getClientAPIKey(environ_map: *std.process.Environ.Map) ?[]const u8 {
