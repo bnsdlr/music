@@ -13,6 +13,11 @@ const End = ?[]const u8;
 const Begin = ?[]const u8;
 const Direction = enum {forward, backward};
 
+pub const Error = struct {
+    @"error": []const u8,
+    help: []const u8,
+};
+
 // make this enum?: City, Subdivision, type of, District, Country
 pub const Type = []const u8;
 
@@ -139,7 +144,7 @@ pub const Artist = struct {
     @"user-tags": ?[]UserTag = null,
     genres: ?[]Genre = null,
     @"user-genres": ?[]Genre = null,
-    ratings: ?Rating = null,
+    rating: ?Rating = null,
     @"user-ratings": ?UserRating = null,
     recordings: ?[]Recording = null,
     releases: ?[]Release = null,
@@ -226,7 +231,7 @@ pub const Event = struct {
     @"user-tags": ?[]UserTag = null,
     genres: ?[]Genre = null,
     @"user-genres": ?[]Genre = null,
-    ratings: ?Rating = null,
+    rating: ?Rating = null,
     @"user-ratings": ?UserRating = null,
     relations: ?[]Relation = null,
 };
@@ -404,7 +409,7 @@ pub const Label = struct {
     @"user-tags": ?[]UserTag = null,
     genres: ?[]Genre = null,
     @"user-genres": ?[]Genre = null,
-    ratings: ?Rating = null,
+    rating: ?Rating = null,
     @"user-ratings": ?UserRating = null,
     releases: ?[]Release = null,
     relations: ?[]Relation = null,
@@ -510,7 +515,7 @@ pub const Recording = struct {
     @"user-tags": ?[]UserTag = null,
     genres: ?[]Genre = null,
     @"user-genres": ?[]Genre = null,
-    ratings: ?Rating = null,
+    rating: ?Rating = null,
     @"user-ratings": ?UserRating = null,
     releases: ?[]Release = null,
     @"release-groups": ?[]ReleaseGroup = null,
@@ -774,7 +779,7 @@ pub const ReleaseGroup = struct {
     @"user-tags": ?[]UserTag = null,
     genres: ?[]Genre = null,
     @"user-genres": ?[]Genre = null,
-    ratings: ?Rating = null,
+    rating: ?Rating = null,
     @"user-ratings": ?UserRating = null,
     relations: ?[]Relation = null,
 };
@@ -879,7 +884,7 @@ pub const Work = struct {
     @"user-tags": ?[]UserTag = null,
     genres: ?[]Genre = null,
     @"user-genres": ?[]Genre = null,
-    ratings: ?Rating = null,
+    rating: ?Rating = null,
     @"user-ratings": ?UserRating = null,
     relations: ?[]Relation = null,
 
@@ -913,9 +918,9 @@ pub const Url = struct {
 
 pub const Locale = iso.Alpha2Lowercase;
 
-const Iso31661Code = iso.Alpha2;
-const Iso31662Code = iso.Subdivision;
-const Iso31663Code = iso.FormerCountry;
+pub const Iso31661Code = iso.Alpha2;
+pub const Iso31662Code = iso.Subdivision;
+pub const Iso31663Code = iso.FormerCountry;
 
 // Shared / Primitive types {{{
 
@@ -964,7 +969,7 @@ pub const Genre = struct {
 };
 
 pub const Rating = struct {
-    value: f32,
+    value: ?f32,
     @"votes-count": u32,
 };
 
@@ -1088,14 +1093,16 @@ pub const Track = struct {
     id: MBID,
     number: []const u8,
     title: []const u8,
-    length: u32,       // milliseconds
+    /// milliseconds
+    length: u32,
     position: u32,
     recording: Recording,
     @"artist-credit": []ArtistCreditEntry,
 };
 
 pub const Disc = struct {
-    id: []const u8, // disc ID (not an MBID)
+    /// disc ID (not an MBID)
+    id: []const u8, 
     sectors: u32,
     @"offset-count": u32,
     offsets: []u32,
@@ -1245,3 +1252,8 @@ pub const IswcLookup = struct {
 };
 
 // }}}
+
+test {
+    std.testing.refAllDecls(@This());
+}
+

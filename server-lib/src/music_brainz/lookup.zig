@@ -11,6 +11,8 @@ const assert = std.debug.assert;
 const mb = @import("../music_brainz.zig");
 const log = mb.log;
 
+const jrs = @import("json_response_struct.zig");
+
 const MBID = mb.MBID;
 
 const url = @import("../url.zig");
@@ -40,6 +42,25 @@ pub const EntityType = enum {
     series,
     work,
     url,
+
+    pub fn LookupResponse(comptime self: @This()) type {
+        return switch (self) {
+            .area => jrs.Area,
+            .artist => jrs.Artist,
+            .collection => jrs.Collection,
+            .event => jrs.Event,
+            .genre => jrs.Genre,
+            .instrument => jrs.Instrument,
+            .label => jrs.Label,
+            .place => jrs.Place,
+            .recording => jrs.Recording,
+            .release => jrs.Release,
+            .@"release-group" => jrs.ReleaseGroup,
+            .series => jrs.Series,
+            .work => jrs.Work,
+            .url => jrs.Url,
+        };
+    }
 };
 
 /// https://musicbrainz.org/doc/MusicBrainz_API#:~:text=the%20Search%20page.-,Subqueries,-The%20inc=
@@ -109,6 +130,10 @@ pub const Entity = union(EntityType) {
     pub const Artist = struct {
         incl: ArtistIncludes = .{},
         rels: Relations = .{},
+        /// Only effective if `release-groups` OR `releases` is included. Will filter them.
+        type: ?union{group: jrs.ReleaseGroupType, release: jrs.ReleaseType} = null,
+        /// Only effective if `releases` is included. Will filter them.
+        status: ?jrs.ReleaseStatus = null,
         mbid: MBID,
 
         pub fn format(
@@ -210,6 +235,10 @@ pub const Entity = union(EntityType) {
     pub const Recording = struct {
         incl: RecordingIncludes = .{},
         rels: RecordingRelations = .{},
+        /// Only effective if `release-groups` OR `releases` is included. Will filter them.
+        type: ?union {group: jrs.ReleaseGroupType, release: jrs.ReleaseType} = null,
+        /// Only effective if `releases` is included. Will filter them.
+        status: ?jrs.ReleaseStatus = null,
         mbid: MBID,
 
         pub fn format(
@@ -254,6 +283,8 @@ pub const Entity = union(EntityType) {
     pub const Release = struct {
         incl: ReleaseIncludes = .{},
         rels: ReleaseRelations = .{},
+        /// Only effective if `release-groups` is included. Will filter them.
+        type: ?jrs.ReleaseGroupType = null,
         mbid: MBID,
 
         pub fn format(
@@ -307,6 +338,10 @@ pub const Entity = union(EntityType) {
     pub const ReleaseGroup = struct {
         incl: ReleaseGroupIncludes = .{},
         rels: Relations = .{},
+        /// Only effective if `releases` is included. Will filter them.
+        type: ?jrs.ReleaseType = null,
+        /// Only effective if `releases` is included. Will filter them.
+        status: ?jrs.ReleaseStatus = null,
         mbid: MBID,
 
         pub fn format(
@@ -330,6 +365,10 @@ pub const Entity = union(EntityType) {
     pub const Label = struct {
         incl: LabelIncludes = .{},
         rels: Relations = .{},
+        /// Only effective if `releases` is included. Will filter them.
+        type: ?jrs.ReleaseType = null,
+        /// Only effective if `releases` is included. Will filter them.
+        status: ?jrs.ReleaseStatus = null,
         mbid: MBID,
 
         pub fn format(
@@ -346,6 +385,23 @@ pub const Entity = union(EntityType) {
         releases: bool = false,
     };
     // }}}
+
+    pub const Response = union(EntityType) {
+        area: json.Parsed(jrs.Area),
+        artist: json.Parsed(jrs.Artist),
+        collection: json.Parsed(jrs.Collection),
+        event: json.Parsed(jrs.Event),
+        genre: json.Parsed(jrs.Genre),
+        instrument: json.Parsed(jrs.Instrument),
+        label: json.Parsed(jrs.Label),
+        place: json.Parsed(jrs.Place),
+        recording: json.Parsed(jrs.Recording),
+        release: json.Parsed(jrs.Release),
+        @"release-group": json.Parsed(jrs.ReleaseGroup),
+        series: json.Parsed(jrs.Series),
+        work: json.Parsed(jrs.Work),
+        url: json.Parsed(jrs.Url),
+    };
 };
 
 /// inc= arguments which affect subqueries
@@ -419,15 +475,94 @@ pub fn formatStruct(value: anytype, writer: *Io.Writer, first: bool) Io.Writer.E
     return f;
 }
 
-pub const Error = error{
-    MBIDNotValidUUID,
-    NoReleasesFound,
-    MusizBrainzAPIChanged,
-    ExceededRateLimit,
-    UnexpectedSatusCode,
+pub const LookupValueError = http.Client.FetchError || Io.Writer.Error || error{BufferUnderrun,DuplicateField,InvalidCharacter,InvalidEnumTag,InvalidNumber,LengthMismatch,MissingField,OutOfMemory,Overflow,SyntaxError,UnexpectedEndOfInput,UnexpectedToken,UnknownField,ValueTooLong};
+
+// lookupValue {{{
+
+pub const LookupValueReturnValue = struct { 
+    http.Status,
+    LookupValueReturnUnion,
 };
 
-pub const LookupError = Error || http.Client.FetchError || Io.Writer.Error || error{BufferUnderrun,DuplicateField,InvalidCharacter,InvalidEnumTag,InvalidNumber,LengthMismatch,MissingField,OutOfMemory,Overflow,SyntaxError,UnexpectedEndOfInput,UnexpectedToken,UnknownField,ValueTooLong};
+pub const LookupValueReturnUnion = union(enum) { ok: json.Parsed(json.Value), response_body: std.ArrayList(u8) };
+
+/// /<ENTITY_TYPE>/<MBID>?inc=<INC>
+///
+/// 307 redirect to an index.json file, if there is a release with this MBID.
+/// 400 if {mbid} cannot be parsed as a valid UUID.
+/// 404 if there is no release with this MBID.
+/// 405 if the request method is not one of GET or HEAD. (should never occur)
+/// 406 if the server is unable to generate a response suitable to the Accept header.
+/// 503 if the user has exceeded their rate limit.
+///
+/// Note that the number of linked entities returned is always limited to 25. If
+/// you need the remaining results, you will have to perform a browse request.
+pub fn lookupValue(
+    client: *http.Client,
+    allocator: mem.Allocator,
+    entity: *const Entity
+) LookupValueError!LookupValueReturnValue {
+    var lookup_url_buf: [2048]u8 = undefined;
+    var lookup_url_writer: Io.Writer = .fixed(&lookup_url_buf);
+    try formatUrl(entity, &lookup_url_writer);
+
+    const lookup_url = lookup_url_writer.buffered();
+
+    log.debug("lookup url: {s}", .{lookup_url});
+
+    assert(mem.startsWith(u8, lookup_url, base_url));
+
+    var response_writer: Io.Writer.Allocating = .init(allocator);
+    defer response_writer.deinit();
+
+    const fetch_res = try client.fetch(.{
+        .location = .{ .url = lookup_url },
+        .method = .GET,
+        .response_writer = &response_writer.writer,
+        .redirect_behavior = .init(1),
+        .headers = .{ 
+            .accept_encoding = .{ .override = "application/json" },
+            .user_agent = .{ .override = mb.user_agent }
+        },
+    });
+
+    var response = response_writer.toArrayList();
+
+    log.debug("status: {t} ({d}); response body:\n{s}", .{fetch_res.status, @intFromEnum(fetch_res.status), response.items});
+
+    switch (fetch_res.status) {
+        // 200 
+        .ok => {
+            defer response.deinit(allocator);
+            return .{fetch_res.status, .{ .ok = try json.parseFromSlice(json.Value, allocator, response.items, .{}) }};
+        },
+        else => |status| {
+            log.warn(
+                "Got unexpected status code from '" ++ base_url ++ "' (status: {d}, {t}), response body: \n{s}", 
+                .{@intFromEnum(status), status, response.items}
+            );
+            return .{fetch_res.status, .{ .response_body = response }};
+        }
+    }
+}
+
+// }}}
+
+pub const LookupError = LookupValueError || error{
+    UnexpectedJsonType,
+};
+
+pub const LookupReturnValue = struct {
+    http.Status,
+    LookupReturnUnion,
+};
+
+pub const LookupReturnUnion = union(enum) {
+    ok: Ok,
+    response_body: std.ArrayList(u8),
+
+    pub const Ok = union(enum) { @"error": jrs.Error, ok: Entity.Response };
+};
 
 /// /<ENTITY_TYPE>/<MBID>?inc=<INC>
 ///
@@ -437,58 +572,57 @@ pub const LookupError = Error || http.Client.FetchError || Io.Writer.Error || er
 /// 405 if the request method is not one of GET or HEAD.
 /// 406 if the server is unable to generate a response suitable to the Accept header.
 /// 503 if the user has exceeded their rate limit.
-pub fn lookupValue(client: *http.Client, allocator: mem.Allocator, entity: *const Entity) LookupError!json.Parsed(json.Value) {
-    var lookup_url_buf: [2048]u8 = undefined;
-    var lookup_url_writer: Io.Writer = .fixed(&lookup_url_buf);
-    try formatUrl(entity, &lookup_url_writer);
+///
+/// Note that the number of linked entities returned is always limited to 25. If
+/// you need the remaining results, you will have to perform a browse request.
+///
+/// Returns the http status code and:
+/// if received ok from API: union(enum) { @"error": jrs.Error, ok: entity_type.LookupResponse() }
+/// else: the response body as arraylist.
+pub fn lookup(
+    client: *http.Client,
+    allocator: mem.Allocator,
+    entity: *const Entity
+) LookupError!LookupReturnValue {
+    const lookup_value_result: LookupValueError!LookupValueReturnValue = @call(.always_inline, lookupValue, .{client, allocator, entity});
+    const status: http.Status, const value_result: LookupValueReturnUnion = try lookup_value_result;
 
-    const lookup_url = lookup_url_writer.toArrayList();
+    switch (value_result) {
+        .ok => |json_value| {
+            defer json_value.deinit();
 
-    log.debug("lookup url: {s}", .{lookup_url.items});
+            var result: LookupReturnUnion.Ok = undefined;
+            _ = &result;
 
-    assert(mem.startsWith(u8, lookup_url.items, base_url));
+            switch (json_value.value) {
+                .object => |obj| {
+                    if (obj.contains("error")) {
+                        // result = .{ .@"error" = try json.parseFromValue(jrs.Error, allocator, obj, .{}) };
+                        const parsed = try json.parseFromValue(jrs.Error, allocator, json_value.value, .{.ignore_unknown_fields = true});
+                        result = @unionInit(LookupReturnUnion.Ok, "error", parsed.value);
+                    } else {
+                        // result = .{ .ok = try json.parseFromValue(Entity.Response, allocator, obj, .{}) };
+                        result = @unionInit(LookupReturnUnion.Ok, "ok", undefined);
 
-    var body_writer: Io.Writer.Allocating = .init(allocator);
-    defer body_writer.deinit();
+                        @setEvalBranchQuota(5200);
+                        inline for (@typeInfo(Entity).@"union".fields) |field| {
+                            if (mem.eql(u8, field.name, @tagName(entity.*))) {
+                                const ResultType = @field(EntityType, field.name).LookupResponse();
+                                const parsed = try json.parseFromValue(ResultType, allocator, json_value.value, .{.ignore_unknown_fields = true});
+                                result.ok = @unionInit(Entity.Response, field.name, parsed);
+                            }
+                        }
+                    }
+                },
+                else => {
+                    log.debug("Expected 'json' to be of type 'object', found type '{t}'", .{json_value.value});
+                    return LookupError.UnexpectedJsonType;
+                }
+            }
 
-    const fetch_res = try client.fetch(.{
-        .location = .{ .url = lookup_url.items },
-        .method = .GET,
-        .response_writer = &body_writer.writer,
-        .redirect_behavior = .init(1),
-        .headers = .{ 
-            .accept_encoding = .{ .override = "json" },
-            .user_agent = .{ .override = mb.user_agent }
+            return .{status, .{ .ok = result }};
         },
-    });
-
-    var response = body_writer.toArrayList();
-    defer response.deinit(allocator);
-
-    log.debug("status: {t} ({d}); response body:\n{s}", .{fetch_res.status, @intFromEnum(fetch_res.status), response.items});
-
-    switch (fetch_res.status) {
-        // 200 
-        .ok => {
-            return try json.parseFromSlice(json.Value, allocator, response.items, .{});
-        },
-        // 400 if {mbid} cannot be parsed as a valid UUID.
-        .bad_request => return Error.MBIDNotValidUUID,
-        // 404 if there is no release with this MBID.
-        .not_found => return Error.NoReleasesFound,
-        // 405 if the request method is not one of GET or HEAD.
-        .method_not_allowed => unreachable, // medthod is always GET
-        // 406 if the server is unable to generate a response suitable to the Accept header.
-        .not_acceptable => return Error.MusizBrainzAPIChanged,
-        // 503 if the user has exceeded their rate limit.
-        .service_unavailable => return Error.ExceededRateLimit,
-        else => |status| {
-            log.warn(
-                "Got unexpected status code from '" ++ base_url ++ "' (status: {d}, {t}), response body: \n{s}", 
-                .{@intFromEnum(status), status, response.items}
-            );
-            return Error.UnexpectedSatusCode;
-        }
+        .response_body => |body| return .{status, .{ .response_body = body } },
     }
 }
 
@@ -503,43 +637,7 @@ pub fn formatUrl(entity: *const Entity, writer: *Io.Writer) Io.Writer.Error!void
     }
 }
 
-// TODO: 
-// All lookups which include release-groups allow a type= argument to filter
-// the release-groups by a specific type. All lookups which include releases
-// also allow the type= argument, and a status= argument is allowed.
-
-
-// Note that the number of linked entities returned is always limited to 25. If
-// you need the remaining results, you will have to perform a browse request.
-
-
-// https://musicbrainz.org/ws/2/release-group/{mbid}?inc=genres+user-genres&fmt=json
-//
-// Relationships
-// You can request relationships with the appropriate includes:
-//
-//  - area-rels
-//  - artist-rels
-//  - event-rels
-//  - genre-rels
-//  - instrument-rels
-//  - label-rels
-//  - place-rels
-//  - recording-rels
-//  - release-rels
-//  - release-group-rels
-//  - series-rels
-//  - url-rels
-//  - work-rels
-//
-//  additional
-//   - recording-level-rels
-//   - release-group-level-rels (for releases only)
-//   - work-level-rels
-//
-// Keep in mind these just act as switches. If you request work-level-rels for
-// a recording, you will still need to request work-rels (to get the
-// relationship from the recording to the work in the first place) and any
-// other relationship types you want to see (for example, artist-rels if you
-// want to see work-artist relationships).
+test {
+    std.testing.refAllDecls(@This());
+}
 

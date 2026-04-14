@@ -1,35 +1,17 @@
+const builtin = @import("builtin");
 const std = @import("std");
+const mem = std.mem;
+const Io = std.Io;
 const process = std.process;
 const Init = process.Init;
 
-pub const lib = @import("lib");
+const lib = @import("lib");
+const AppConfig = @import("args.zig").AppConfig;
 
-const server = @import("core/server.zig");
-
-pub const AppConfig = struct {
-    acoustid_api_key: []const u8 = undefined,
-    acoustid_table: lib.acoustid.TableOptions,
-    music_brainz_user_agent: []const u8 = undefined,
-
-    const Self = @This();
-
-    var set = false;
-
-    pub fn init(environ_map: *process.Environ.Map) void {
-        if (set) @panic("AppConfig can only be initilized once.");
-        set = true;
-        app_config.acoustid_api_key = lib.acoustid.getClientAPIKey(environ_map) orelse {
-            log.err("Could not find environment variable '" ++ lib.acoustid.env_acoustid_api_key_key ++ "'.", .{});
-            process.exit(1);
-        };
-    }
-};
-
-pub const music_brainz_user_agent = lib.music_brainz.createUserAgent("music", "0.0.1", "me@bsdlr.de");
+const Server = @import("core/Server.zig");
 
 var app_config: AppConfig = .{
     .acoustid_table = .{},
-    .music_brainz_user_agent = music_brainz_user_agent,
 };
 
 pub fn config() *const AppConfig {
@@ -39,23 +21,42 @@ pub fn config() *const AppConfig {
 const log = std.log.scoped(.main);
 
 pub fn main(init: Init) !void {
-    AppConfig.init(init.environ_map);
+    try app_config.init(init.environ_map, init.minimal.args);
 
-    inline for (@typeInfo(lib.music_brainz.json_response).@"struct".decls) |d| {
-        const T = @field(lib.music_brainz.json_response, d.name);
-        if (@TypeOf(T) != type) continue;
-        std.debug.print("{s: <52}: {d: <6} (optional: +{d})\n", .{@typeName(T), @sizeOf(T), @sizeOf(?T) - @sizeOf(T)});
-    }
-    //
-    // inline for (.{
-    //     std.json.Value,
-    // }) |t| {
-    //     std.debug.print("{s: <52}: {d: <6} (optional: +{d})\n", .{@typeName(t), @sizeOf(t), @bitSizeOf(?t) - @bitSizeOf(t)});
-    // }
-    //
-    process.exit(0);
+    // Threaded
+    var threaded: Io.Threaded = .init(init.gpa, .{
+        .environ = init.minimal.environ,
+    });
+    defer threaded.deinit();
+    const io = threaded.io();
 
-    try server.run(init);
+    // // Evented
+    // var evented: Io.Evented = undefined;
+    // try evented.init(init.gpa, .{
+    //     .environ = init.minimal.environ,
+    //     // .backing_allocator_needs_mutex = false,
+    // });
+    // defer evented.deinit();
+    // const io = evented.io();
+
+    // try @import("core/pool.zig").testQueue(io);
+
+    const gpa = if (builtin.mode == .Debug)
+            init.gpa
+        else
+            std.heap.smp_allocator;
+
+
+    const cpu_core_count = try std.Thread.getCpuCount();
+
+    var server: Server = try .init(gpa, Server.Options{
+        .queue_buffer_size = 100,
+        .worker_count = cpu_core_count - 1,
+        .initial_worker_arena_bytes = 64 * 1024 * 1024,
+        .worker_arena_retain_limit = 64 * 1024 * 1024,
+    });
+    defer server.deinit(init.gpa);
+    try server.run(io, app_config);
 }
 
 test {
