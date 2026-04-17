@@ -1,4 +1,5 @@
 const std = @import("std");
+const fmt = std.fmt;
 const mem = std.mem;
 const Io = std.Io;
 const net = Io.net;
@@ -6,22 +7,33 @@ const http = std.http;
 const Allocator = std.mem.Allocator;
 const Connection = net.Stream;
 
-const Server = @import("Server.zig");
+const main = @import("../main.zig");
+const path = @import("Paths.zig").path;
 
+const Server = @import("Server.zig");
 const log = Server.log;
 pub const HandleConnectionError = Server.WorkFnError;
+pub const WorkFnParams = Server.WorkFnParameters;
 
 pub const v1 = @import("api/v1.zig");
 
+pub const helper = @import("api/helper.zig");
+pub const handleRespondError = helper.handleRespondError;
+
 // connection handlig {{{
 
-pub fn handleConnection(io: Io, gpa: *Allocator, wp: []const u8, connection: Connection) HandleConnectionError!void {
+pub fn handleConnection(params: WorkFnParams) HandleConnectionError!void {
+    const io = params.io;
+    const gpa = params.gpa;
+    const wp = params.worker_prefix;
+    const connection = params.connection;
+
     defer connection.close(io);
 
-    const reader_buffer = try gpa.alloc(u8, 10 * 1024);
+    const reader_buffer = try gpa.alloc(u8, main.config().request_reader_buffer_size);
     var reader = connection.reader(io, reader_buffer);
 
-    const writer_buffer = try gpa.alloc(u8, 4 * 1024);
+    const writer_buffer = try gpa.alloc(u8, main.config().response_writer_buffer_size);
     var writer = connection.writer(io, writer_buffer);
 
     var http_server = http.Server.init(&reader.interface, &writer.interface);
@@ -74,10 +86,51 @@ pub fn handleConnection(io: Io, gpa: *Allocator, wp: []const u8, connection: Con
     log.info("{s} transfer compression  : {t}", .{wp, req.head.transfer_compression});
     log.info("{s} transfer encoding     : {t}", .{wp, req.head.transfer_encoding});
 
-    if (mem.startsWith(u8, req.head.target, "/v1")) {
+    if (mem.startsWith(u8, req.head.target, "/api")) {
         try v1.handleConnection(io, gpa, wp, &req);
     } else {
-        // send files
+        const target_file_rel_path = try mem.replaceOwned(u8, gpa, req.head.target, "../", "");
+
+        log.debug("{s} '{s}' -> '{s}'", .{wp, req.head.target, target_file_rel_path});
+
+        const target_path = if (mem.endsWith(u8, req.head.target, "/")) 
+                try fmt.allocPrint(gpa, "{s}{s}index.html", .{path(&.{.server, .public}), target_file_rel_path})
+            else
+                try fmt.allocPrint(gpa, "{s}{s}", .{path(&.{.server, .public}), target_file_rel_path});
+
+        const contents = Io.Dir.cwd().readFileAlloc(io, target_path, gpa, .limited(main.config().max_send_file_size)) catch |err| {
+            log.warn("{s} Failed to open file '{s}' with '{t}'", .{wp, target_path, err});
+            switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.IsDir,
+                error.AccessDenied,
+                error.AntivirusInterference,
+                error.BadPathName,
+                error.FileLocksUnsupported,
+                error.FileNotFound,
+                error.NetworkNotFound,
+                error.NoDevice,
+                error.NotOpenForReading,
+                error.PermissionDenied,
+                error.FileTooBig => {
+                    req.respond("404 File Not Found", .{ .keep_alive = false, .status = .not_found, .reason = "FileNotFound" }) 
+                        catch |e| helper.handleRespondError(e);
+                },
+                // error.DeviceBusy,
+                // error.FileBusy,
+                // error.InputOutput,
+                // error.LockViolation,
+                // error.NoSpaceLeft,
+                // error.PipeBusy,
+                else => {},
+            }
+            return;
+        };
+        defer gpa.free(contents);
+
+        req.respond(contents, .{ .keep_alive = false }) catch |err| helper.handleRespondError(err);
+        log.info("{s} Send File '{s}'", .{wp, target_path});
+        return;
     }
 }
 

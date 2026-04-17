@@ -29,7 +29,13 @@ pub const WorkFnError = error{
     OutOfMemory,
 };
 
-pub const WorkFn = *const fn (Io, *Allocator, []const u8, Connection) WorkFnError!void;
+pub const WorkFn = *const fn (WorkFnParameters) WorkFnError!void;
+pub const WorkFnParameters = struct {
+    gpa: Allocator,
+    io: Io,
+    worker_prefix: []const u8,
+    connection: net.Stream,
+};
 
 // init / deinit {{{
 
@@ -132,7 +138,7 @@ pub fn workerLoop(io: Io, opts: WorkerOptions) error{Canceled}!void {
     var worker_prefix_buffer: [100]u8 = undefined;
     const worker_prefix = fmt.bufPrint(&worker_prefix_buffer, "\x1b[38;2;{d};{d};{d}mWorker({d})\x1b[0m", .{r, g, b, opts.id}) catch @panic("worker prefix too long");
 
-    var allocator = opts.arena.allocator();
+    const allocator = opts.arena.allocator();
 
     while (true) {
         const connection = opts.req_queue.getOne(io) catch |err| switch (err) {
@@ -143,7 +149,12 @@ pub fn workerLoop(io: Io, opts: WorkerOptions) error{Canceled}!void {
             error.Canceled => return error.Canceled,
         };
         log.info("{s} \x1b[1;90mReceived connection\x1b[0m", .{worker_prefix});
-        opts.work_fn(io, &allocator, worker_prefix, connection) catch |err| {
+        opts.work_fn(.{ 
+            .gpa = allocator,
+            .io = io,
+            .worker_prefix = worker_prefix,
+            .connection = connection 
+        }) catch |err| {
             log.err("{s} shutting down, reason '{t}'", .{worker_prefix, err});
             break;
         };
@@ -186,3 +197,14 @@ pub const Options = struct {
 
 // }}}
 
+// Paths {{{
+
+pub const Paths = struct {
+    public: []const u8,
+};
+
+// }}}
+
+test {
+    std.testing.refAllDecls(@This());
+}

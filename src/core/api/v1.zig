@@ -7,14 +7,16 @@ const Allocator = std.mem.Allocator;
 const api = @import("../api.zig");
 const HandleConnectionError = api.HandleConnectionError;
 
+const handleRespondError = api.handleRespondError;
+
 pub fn handleConnection(
     io: Io,
-    gpa: *Allocator,
+    gpa: Allocator,
     wp: []const u8,
     request: *http.Server.Request
 ) HandleConnectionError!void {
     _ = io;
     _ = gpa;
     _ = wp;
-    request.respond("hello from api v1", .{}) catch unreachable;
+    request.respond("hello from api v1", .{}) catch |err| handleRespondError(err);
 }

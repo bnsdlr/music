@@ -4,6 +4,7 @@ const fmt = std.fmt;
 const process = std.process;
 
 const lib = @import("lib");
+const core = @import("core.zig");
 
 const log = std.log.scoped(.args);
 
@@ -12,6 +13,9 @@ pub const AppConfig = struct {
     acoustid_table: lib.acoustid.TableOptions,
     port: u16 = 8080,
     host: []const u8 = "127.0.0.1",
+    response_writer_buffer_size: usize,
+    request_reader_buffer_size: usize,
+    max_send_file_size: usize,
 
     const Self = @This();
 
