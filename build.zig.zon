@@ -1,9 +1,14 @@
 .{
     .name = .music,
-    .version = "0.0.1",
+    .version = "0.0.2",
     .dependencies = .{
-        .@"server-lib" = .{
-            .path = "server-lib",
+        .libchromaprint = .{
+            .url = "git+https://github.com/bnsdlr/libchromaprint#e1b86701c60c513ca09b1fc514fd77965f3d89b9",
+            .hash = "libchromaprint-1.5.3-5-O4olWB0rAwAfrFFmGeGItIFHxcsWbl54gQEUSnV5g05V",
+        },
+        .sqlite = .{
+            .url = "git+https://github.com/bnsdlr/zig-sqlite#9c931deed4371796ce3fc21c84e1e1528682bc36",
+            .hash = "sqlite-3.48.0-F2R_a2ORDgARTOficHDBqQ-r0o508NPC5Qf5unDyWsg1",
         },
     },
     .minimum_zig_version = "0.16.0-dev.3121+d34b868bc",

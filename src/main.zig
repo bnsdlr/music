@@ -1,16 +1,15 @@
 const builtin = @import("builtin");
+const build_zon = @import("build.zig.zon");
 const std = @import("std");
 const mem = std.mem;
 const Io = std.Io;
 const process = std.process;
 const Init = process.Init;
 
-const lib = @import("lib");
+const core = @import("core.zig");
 const AppConfig = @import("args.zig").AppConfig;
 
 const Server = @import("core/Server.zig");
-
-const YTID = lib.yt_dlp.YTID;
 
 pub const Paths = @import("core.zig").Paths;
 pub const paths: Paths = .{
@@ -41,6 +40,7 @@ var app_config: AppConfig = .{
     .request_reader_buffer_size = 10 * 1024,
     .max_send_file_size = 64 * 1024,
     .response_writer_buffer_size = 64 * 1024,
+    .music_brainz_user_agent = @tagName(build_zon.name) ++ "/" ++ build_zon.version ++ " ( me@bsdlr.de )",
 };
 
 pub fn config() *const AppConfig {
@@ -83,7 +83,7 @@ pub fn main(init: Init) !void {
     const dir = try std.Io.Dir.createDirPathOpen(.cwd(), io, paths.p(&.{.yt_dlp}), .{});
     defer dir.close(io);
 
-    var result = lib.yt_dlp.github.downloadLatest(io, &client, dir, paths.yt_dlp, gpa, .always);
+    var result = core.yt_dlp.github.downloadLatest(io, &client, dir, paths.yt_dlp, gpa, .always);
 
     if (result) |*r| {
         switch (r.*) {

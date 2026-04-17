@@ -1,6 +1,6 @@
-pub const shasum = @import("yt-dlp/shasums.zig");
-pub const github = @import("yt-dlp/github.zig");
-pub const YTID = @import("yt-dlp/id.zig").YTID;
+pub const shasum = @import("shasums.zig");
+pub const github = @import("github.zig");
+pub const YTID = @import("id.zig").YTID;
 
 pub const Paths = struct {
     root: []const u8,

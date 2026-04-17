@@ -24,22 +24,20 @@ const Allocator = std.mem.Allocator;
 const expectEqualDeep = std.testing.expectEqualDeep;
 
 const Server = @import("Server.zig");
-const db = @import("db.zig");
 const import_media = @import("media.zig");
 const MusicID = import_media.MusicID;
 const MediaPaths = import_media.Paths;
 const FileOptions = import_media.music.FileOptions;
+const core = @import("../core.zig");
 
 pub const paths = @import("../main.zig").paths;
-
-const lib = @import("lib");
 
 const Self = @This();
 
 root: []const u8,
 server: Server.Paths,
-yt_dlp: lib.yt_dlp.Paths,
-database: db.Paths,
+yt_dlp: core.yt_dlp.Paths,
+database: core.db.Paths,
 media: MediaPaths,
 
 // musicPath {{{

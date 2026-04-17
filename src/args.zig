@@ -3,19 +3,19 @@ const mem = std.mem;
 const fmt = std.fmt;
 const process = std.process;
 
-const lib = @import("lib");
 const core = @import("core.zig");
 
 const log = std.log.scoped(.args);
 
 pub const AppConfig = struct {
     acoustid_api_key: []const u8 = undefined,
-    acoustid_table: lib.acoustid.TableOptions,
+    acoustid_table: core.acoustid.TableOptions,
     port: u16 = 8080,
     host: []const u8 = "127.0.0.1",
     response_writer_buffer_size: usize,
     request_reader_buffer_size: usize,
     max_send_file_size: usize,
+    music_brainz_user_agent: []const u8,
 
     const Self = @This();
 
@@ -38,14 +38,16 @@ pub const AppConfig = struct {
             } else if (try anyArg([]const u8, &.{"acoustid-api-key", "acoustid"}, arg, &i)) |r| {
                 self.acoustid_api_key = r;
                 set_acoustid_api_key = true;
+            } else if (try anyArg([]const u8, &.{"music-brainz-user-agent", "mb-user-agent", "mb-agent"}, arg, &i)) |r| {
+                self.music_brainz_user_agent = r;
             } else {
                 i += arg.len;
             }
             i += 1;
         }
 
-        if (!set_acoustid_api_key) self.acoustid_api_key = lib.acoustid.getClientAPIKey(environ_map) orelse {
-            log.err("Could not find environment variable '" ++ lib.acoustid.env_acoustid_api_key_key ++ "', or argument --acoustid-api-key=<api-key>.", .{});
+        if (!set_acoustid_api_key) self.acoustid_api_key = core.acoustid.getClientAPIKey(environ_map) orelse {
+            log.err("Could not find environment variable '" ++ core.acoustid.env_acoustid_api_key_key ++ "', or argument --acoustid-api-key=<api-key>.", .{});
             process.exit(1);
         };
     }

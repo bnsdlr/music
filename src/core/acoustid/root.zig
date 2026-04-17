@@ -9,9 +9,9 @@ const Uri = std.Uri;
 const Allocator = mem.Allocator;
 const expectEqualDeep = std.testing.expectEqualDeep;
 
-const url = @import("url.zig");
+const url = @import("../url/root.zig");
 const chromaprint = @import("chromaprint");
-const music_brainz = @import("music_brainz.zig");
+const music_brainz = @import("../music_brainz/root.zig");
 
 const log = std.log.scoped(.acoustid);
 

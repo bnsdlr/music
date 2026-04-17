@@ -8,14 +8,15 @@ const json = std.json;
 const expectEqualDeep = std.testing.expectEqualDeep;
 const assert = std.debug.assert;
 
-const mb = @import("../music_brainz.zig");
+const mb = @import("root.zig");
+const config = @import("../../main.zig").config;
 const log = mb.log;
 
 const jrs = @import("json_response_struct.zig");
 
 const MBID = mb.MBID;
 
-const url = @import("../url.zig");
+const url = @import("../url/root.zig");
 
 //  lookup:   /<ENTITY_TYPE>/<MBID>?inc=<INC>
 // https://musicbrainz.org/ws/2/release-group/3bd76d40-7f0e-36b7-9348-91a33afee20e?inc=genres&fmt=json
@@ -522,7 +523,7 @@ pub fn lookupValue(
         .redirect_behavior = .init(1),
         .headers = .{ 
             .accept_encoding = .{ .override = "application/json" },
-            .user_agent = .{ .override = mb.user_agent }
+            .user_agent = .{ .override = config().music_brainz_user_agent }
         },
     });
 

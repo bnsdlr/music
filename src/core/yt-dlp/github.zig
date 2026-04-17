@@ -12,7 +12,7 @@ const Allocator = mem.Allocator;
 
 const expectEqualDeep = std.testing.expectEqualDeep;
 
-const Paths = @import("../yt-dlp.zig").Paths;
+const Paths = @import("root.zig").Paths;
 
 pub const asset_os = switch (builtin.os.tag) {
     .linux => switch (builtin.cpu.arch) {

@@ -11,8 +11,7 @@ const assert = std.debug.assert;
 
 const AppConfig = @import("../args.zig").AppConfig;
 
-const lib = @import("lib");
-const hslToRgb = lib.color.hslToRgb;
+const hslToRgb = @import("color/root.zig").hslToRgb;
 
 const api = @import("api.zig");
 

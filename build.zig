@@ -4,22 +4,21 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
-    const server_lib = b.dependency("server-lib", .{
-        .optimize = optimize,
+    const build_zig_zon = b.createModule(.{
+        .root_source_file = b.path("build.zig.zon"),
         .target = target,
-        .music_brainz_user_agent = "music/0.0.1 ( me@bsdlr.de )",
+        .optimize = optimize,
     });
-    const lib_mod = server_lib.module("server-lib");
 
-    const sqlite = server_lib.builder.dependency("sqlite", .{
+    const sqlite = b.dependency("sqlite", .{
         .target = target,
         .optimize = optimize,
-    }).module("sqlite");
+    });
 
-    const wrapper_mod = server_lib.builder.dependency("libchromaprint", .{
+    const wrapper = b.dependency("libchromaprint", .{
         .target = target,
         .optimize = optimize,
-    }).module("wrapper");
+    });
 
     const exe = b.addExecutable(.{
         .name = "music",
@@ -29,9 +28,9 @@ pub fn build(b: *std.Build) void {
             .target = target,
         }),
     });
-    exe.root_module.addImport("lib", lib_mod);
-    exe.root_module.addImport("sqlite", sqlite);
-    exe.root_module.addImport("chromaprint", wrapper_mod);
+    exe.root_module.addImport("sqlite", sqlite.module("sqlite"));
+    exe.root_module.addImport("chromaprint", wrapper.module("wrapper"));
+    exe.root_module.addImport("build.zig.zon", build_zig_zon);
 
     b.installArtifact(exe);
 
@@ -46,10 +45,8 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    const lib_mod_tests = b.addRunArtifact(b.addTest(.{ .root_module = lib_mod }));
     const exe_tests = b.addRunArtifact(b.addTest(.{ .root_module = exe.root_module }));
 
     const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&lib_mod_tests.step);
     test_step.dependOn(&exe_tests.step);
 }

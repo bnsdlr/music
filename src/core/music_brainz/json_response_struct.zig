@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-const mb = @import("../music_brainz.zig");
+const mb = @import("root.zig");
 const iso = @import("iso.zig");
 
 const MBID = mb.MBID;
