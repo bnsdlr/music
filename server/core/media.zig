@@ -9,9 +9,17 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const music = @import("media/music.zig");
-pub const MusicID = music.ID;
+
+pub const Tag = enum(u6) {
+    yt = 0,
+    _,
+};
+
+pub const ID = @import("id.zig").ID(Tag, u66);
 
 pub const Paths = struct {
     root: []const u8,
     music: music.Paths,
+
+    pub const default: @This() = .{ .music = .default, .root = "media" };
 };

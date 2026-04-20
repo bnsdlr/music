@@ -12,7 +12,12 @@ const Allocator = mem.Allocator;
 
 const expectEqualDeep = std.testing.expectEqualDeep;
 
+const paths = @import("../../main.zig").paths;
+
+const cli = @import("cli.zig");
+const shasums = @import("shasums.zig");
 const Paths = @import("root.zig").Paths;
+const log = @import("root.zig").log;
 
 pub const asset_os = switch (builtin.os.tag) {
     .linux => switch (builtin.cpu.arch) {
@@ -29,7 +34,8 @@ pub const asset_os = switch (builtin.os.tag) {
     else => @compileError("unsupported OS"),
 };
 
-pub const asset_binary_name = "yt-dlp_" ++ asset_os;
+pub const asset_binary_prefix = "yt-dlp_";
+pub const asset_binary_name = asset_binary_prefix ++ asset_os;
 
 pub const sha2_256sums_name = "SHA2-256SUMS";
 pub const sha2_512sums_name = "SHA2-512SUMS";
@@ -38,6 +44,77 @@ pub const last_latest_release_response_json_file_name = "release.json";
 
 pub const latest_release_url = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest";
 pub const latest_release_uri = Uri.parse(latest_release_url) catch unreachable;
+
+// update {{{
+
+pub fn update(io: Io, gpa: Allocator) Io.Dir.CreateDirPathOpenError!void {
+    if (Io.Dir.cwd().access(io, paths.p(&.{.yt_dlp, .bin}), .{})) {
+        log.info("Updating yt-dlp", .{});
+        if (cli.update(io)) |term| {
+            switch (term) {
+                .exited => |status| {
+                    if (status == 0) return;
+                    log.warn("Failed to update yt-dlp, exited with '{d}'", .{status});
+                },
+                .signal => |sig| log.warn("Failed to update yt-dlp, recevied signal '{any}'", .{sig}),
+                .stopped => |sig| log.warn("Failed to update yt-dlp, stopped with '{any}'", .{sig}),
+                .unknown => |unknown| log.warn("Failed to update yt-dlp, returned unknown '{d}'", .{unknown}),
+            }
+        } else |err| {
+            log.warn("Failed to update yt-dlp with error '{t}'", .{err});
+        }
+
+        log.info("Now trying to download update from github", .{});
+    } else |err| {
+        err catch {};
+    }
+
+    var client: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer client.deinit();
+
+    const dir = try std.Io.Dir.createDirPathOpen(.cwd(), io, paths.p(&.{.yt_dlp}), .{});
+    defer dir.close(io);
+
+    var result = downloadLatest(io, &client, dir, paths.yt_dlp, gpa, .always);
+
+    if (result) |*r| {
+        switch (r.*) {
+            .github_error => |status| {
+                log.err("github responded with unexpected status code '{t}'", .{status});
+            },
+            .ok => |*ok| {
+                defer ok.assets.deinit(gpa);
+                for (ok.assets.items) |*asset| {
+                    defer asset.asset.deinit(gpa);
+                    switch (asset.download_result) {
+                        .@"error" => |err| {
+                            log.err("Failed to download asset '{s}' with error '{t}'", .{asset.asset.name, err});
+                        },
+                        .ok => |a| switch (a) {
+                            .would_overwrite => log.warn("Downloading asset '{s}' would overwrite", .{asset.asset.name}),
+                            .status => |status| {
+                                if (status == .ok) {
+                                    log.info("Successfully downloaded '{s}'", .{asset.asset.name});
+                                } else {
+                                    log.info("Unexpected status code downloading '{s}' (status: {t})", .{asset.asset.name, status});
+                                }
+                            }
+                        }
+                    }
+                }
+                // const verify_result = ok.verification_result catch |err| {
+                //     std.debug.print("Failed to verify sha sums: '{t}'", .{err});
+                //     return;
+                // };
+                // std.debug.print("verified {any}", .{verify_result});
+            }
+        }
+    } else |err| {
+        log.err("Download failed with error '{t}'", .{err});
+    }
+}
+
+// }}}
 
 // release json parse struct {{{
 
@@ -105,10 +182,16 @@ pub const DownloadLatestError = Io.File.Writer.Error || Io.Dir.CreateDirPathOpen
 pub const DownloadLatestResultAssetsItem = struct {
     asset: ReleaseAsset,
     download_result: DownloadAssetUnion,
+
 };
 pub const DownloadLatestResult = union(enum) {
     github_error: http.Status,
-    assets: ArrayList(DownloadLatestResultAssetsItem),
+    ok: Ok,
+
+    const Ok = struct {
+        assets: ArrayList(DownloadLatestResultAssetsItem),
+        // verification_result: @typeInfo(@TypeOf(shasums.verifyShaSums)).@"fn".return_type.?,
+    };
 };
 
 /// docs: https://docs.github.com/de/rest/releases/releases?apiVersion=2026-03-10#get-the-latest-release
@@ -116,7 +199,7 @@ pub fn downloadLatest(
     io: Io,
     client: *http.Client,
     dir: Io.Dir,
-    paths: Paths,
+    yt_paths: Paths,
     gpa: Allocator,
     overwrite: OverwriteMode,
 ) DownloadLatestError!DownloadLatestResult {
@@ -138,7 +221,7 @@ pub fn downloadLatest(
     const parsed_release = try json.parseFromSlice(Release, gpa, response, .{ .ignore_unknown_fields = true });
     defer parsed_release.deinit();
 
-    const bin_dir = try dir.createDirPathOpen(io, paths.bin, .{});
+    const bin_dir = try dir.createDirPathOpen(io, yt_paths.bin, .{});
     defer bin_dir.close(io);
 
     // write the response to a file
@@ -169,7 +252,22 @@ pub fn downloadLatest(
         }
     }
 
-    return @unionInit(DownloadLatestResult, "assets", download_results);
+    
+    // TODO: throws a bus error.
+    // const verify_sha_sums_result = shasums.verifyShaSums(
+    //     io,
+    //     gpa,
+    //     bin_dir,
+    //     asset_binary_name,
+    //     sha2_256sums_name,
+    //     sha2_512sums_name,
+    //     64 * 1024
+    // );
+
+    return @unionInit(DownloadLatestResult, "ok", .{
+        .assets = download_results,
+        // .verification_result = verify_sha_sums_result,
+    });
 }
 
 // }}}

@@ -16,6 +16,7 @@ pub const AppConfig = struct {
     request_reader_buffer_size: usize,
     max_send_file_size: usize,
     music_brainz_user_agent: []const u8,
+    update_yt_dlp: bool = false,
 
     const Self = @This();
 
@@ -40,6 +41,8 @@ pub const AppConfig = struct {
                 set_acoustid_api_key = true;
             } else if (try anyArg([]const u8, &.{"music-brainz-user-agent", "mb-user-agent", "mb-agent"}, arg, &i)) |r| {
                 self.music_brainz_user_agent = r;
+            } else if (try anyArg(bool, &.{"update-yt-dlp", "update"}, arg, &i)) |r| {
+                self.update_yt_dlp = r;
             } else {
                 i += arg.len;
             }
@@ -68,9 +71,9 @@ pub const AppConfig = struct {
                             .slice => return value,
                         },
                         .bool => {
-                            if (eqlAny(.{"1", "t", "true"}, value)) return true;
-                            if (eqlAny(.{"0", "f", "false"}, value)) return false;
-                            try log.err("Failed to parse bool at index {d}\n", .{index.*});
+                            if (eqlAny(&.{"1", "t", "true"}, value)) return true;
+                            if (eqlAny(&.{"0", "f", "false"}, value)) return false;
+                            log.err("Failed to parse bool at index {d}\n", .{index.*});
                         },
                         else => @compileError("not implemented"),
                     }
@@ -81,7 +84,7 @@ pub const AppConfig = struct {
         return null;
     }
 
-    fn eqlAny(comptime any: anytype, value: []const u8) bool {
+    fn eqlAny(comptime any: []const []const u8, value: []const u8) bool {
         for (any) |a| if (mem.eql(u8, a, value)) return true;
         return false;
     }

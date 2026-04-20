@@ -82,12 +82,21 @@ pub fn calculateShaSums(
     const file_reader = file.reader(io, buffer);
     var reader = file_reader.interface;
 
-    var chunk = try gpa.alloc(u8, chunk_size);
+    var c_size: usize = chunk_size;
 
-    while (true) {
-        const bytes = try reader.readSliceShort(chunk);
-        if (calculate_sha256) |*s256| s256.update(chunk[0..bytes]);
-        if (calculate_sha512) |*s512| s512.update(chunk[0..bytes]);
+    std.debug.print("stream read yt-dlp bin to sha calculators\n", .{});
+
+    var i: usize = 0;
+    while (true) : (i += 1) {
+        std.debug.print("{d}\n", .{i});
+        const bytes = reader.take(chunk_size) catch |err| {
+            if (err == error.ReadFailed) return error.ReadFailed;
+            std.debug.print("end: {d}\n", .{reader.end});
+            c_size /= 2;
+            continue;
+        };
+        if (calculate_sha256) |*s256| s256.update(bytes);
+        if (calculate_sha512) |*s512| s512.update(bytes);
     }
 
     const sha256_sum: ?[]u8 = null;
