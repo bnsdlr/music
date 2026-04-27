@@ -13,7 +13,7 @@ pub const Identifier = cli.Identifier;
 
 pub const log = @import("std").log.scoped(.yt_dlp);
 
-pub const VideoID = @import("../id.zig").ID(void, u66);
+pub const VideoID = @import("shared").id.ID(void, u66);
 pub const PlaylistTag = enum(u12) {
     /// PL
     default = (@as(u12, @intCast('P')) << 6) | (@as(u12, @intCast('L'))),
@@ -25,7 +25,7 @@ pub const PlaylistTag = enum(u12) {
     linked = (@as(u12, @intCast('L')) << 6) | (@as(u12, @intCast('L'))),
     _,
 };
-pub const PlaylistID = @import("../id.zig").ID(PlaylistTag, u192);
+pub const PlaylistID = @import("shared").id.ID(PlaylistTag, u192);
 
 pub const ID = union(enum) {
     video: VideoID,

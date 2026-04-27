@@ -15,11 +15,25 @@ pub const Paths = @import("core.zig").Paths;
 pub const paths: Paths = .{
     .root = "sdir",
     .server = .{
-        .public = "src/public",
+        .public = "public",
     },
-    .yt_dlp = .default,
-    .database = .default,
-    .media = .default,
+    .yt_dlp = .{ 
+        .root = "yt-dlp",
+        .bin = "bin",
+        .cache = "cache",
+        .temp = "temp" 
+    },
+    .database = .{ 
+        .root = "db",
+        .backups = "backups",
+        .db_file = "db" 
+    },
+    .media = .{ 
+        .music = .{ 
+            .root = "music" 
+        },
+        .root = "media" 
+    },
 };
 
 var app_config: AppConfig = .{

@@ -35,7 +35,7 @@ pub fn WorkerGroup(
 
         pub const Self = @This();
 
-        pub fn init(base_allocator: Allocator, opts: WorkerGroupInitOptions) !Self {
+        pub fn init(base_allocator: Allocator, opts: WorkerGroupInitOptions) error{OutOfMemory}!Self {
             const connection_queue_buffer = try base_allocator.alloc(T, opts.queue_buffer_size);
             const connection_queue: Io.Queue(T) = .init(connection_queue_buffer);
 

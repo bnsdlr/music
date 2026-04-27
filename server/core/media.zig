@@ -15,7 +15,7 @@ pub const Tag = enum(u6) {
     _,
 };
 
-pub const ID = @import("id.zig").ID(Tag, u66);
+pub const ID = @import("shared").id.ID(Tag, u66);
 
 pub const Paths = struct {
     root: []const u8,

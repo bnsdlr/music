@@ -25,6 +25,8 @@ pub const CurrentTarget = helper.CurrentTarget;
 pub const respondWithNotFound = helper.respondWithNotFound;
 pub const ConnectionExtra = Server.ConnectionGroupExtra;
 
+pub const MimeType = @import("mime_types.zig").MimeType;
+
 pub const log = std.log.scoped(.api);
 
 // connection {{{
@@ -37,13 +39,13 @@ pub fn handleConnection(params: ConnectionWorkFnParams) WorkFnError!void {
     const io = params.io;
     const gpa = params.gpa;
     const wp = params.worker_prefix;
-    const connection = params.task;
+    const stream = params.task;
 
     const reader_buffer = try gpa.alloc(u8, main.config().request_reader_buffer_size);
-    var reader = connection.reader(io, reader_buffer);
+    var reader = stream.reader(io, reader_buffer);
 
     const writer_buffer = try gpa.alloc(u8, main.config().response_writer_buffer_size);
-    var writer = connection.writer(io, writer_buffer);
+    var writer = stream.writer(io, writer_buffer);
 
     var http_server = http.Server.init(&reader.interface, &writer.interface);
 
@@ -77,7 +79,7 @@ pub fn handleConnection(params: ConnectionWorkFnParams) WorkFnError!void {
         return;
     };
 
-    log.info("{s} ip address: '{f}'", .{wp, connection.socket.address});
+    log.info("{s} ip address: '{f}'", .{wp, stream.socket.address});
 
     switch (req.upgradeRequested()) {
         .websocket => |mb_key| {
@@ -101,7 +103,7 @@ pub fn handleConnection(params: ConnectionWorkFnParams) WorkFnError!void {
 
                 params.extra.websocket_bucket.put(io, .{ 
                     .web_socket = ws,
-                    .stream = connection,
+                    .stream = stream,
                 }) catch |err| {
                     req.respond(@errorName(err), .{ .keep_alive = false, .status = .not_acceptable }) catch |e| {
                         log.warn("{s} Failed to respond ('{t}')", .{wp, e});
@@ -117,7 +119,7 @@ pub fn handleConnection(params: ConnectionWorkFnParams) WorkFnError!void {
         .none => {},
     }
 
-    defer connection.close(io);
+    defer stream.close(io);
 
     var header_iterator = req.iterateHeaders();
 
@@ -180,7 +182,11 @@ pub fn handleConnection(params: ConnectionWorkFnParams) WorkFnError!void {
         };
         defer gpa.free(contents);
 
-        req.respond(contents, .{ .keep_alive = false }) catch |err| helper.handleRespondError(err);
+        const mime = MimeType.fromFilePath(target_path) orelse MimeType.@"text/plain";
+
+        req.respond(contents, .{ .keep_alive = false, .extra_headers = &.{
+            .{ .name = "content-type", .value = @tagName(mime) },
+        } }) catch |err| helper.handleRespondError(err);
         log.info("{s} Send File '{s}'", .{wp, target_path});
         return;
     }

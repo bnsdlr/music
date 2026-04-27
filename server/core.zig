@@ -7,7 +7,7 @@ pub const color = @import("core/color/root.zig");
 pub const music_brainz = @import("core/music_brainz/root.zig");
 pub const url = @import("core/url/root.zig");
 pub const yt_dlp = @import("core/yt-dlp/root.zig");
-pub const id = @import("core/id.zig");
+pub const MimeType = @import("core/mime_types.zig").MimeType;
 
 test {
     @import("std").testing.refAllDecls(@This());

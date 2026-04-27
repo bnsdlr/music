@@ -1,4 +1,4 @@
-const id = @import("id.zig");
+const id = @import("shared").id;
 
 pub const Paths = struct {
     root: []const u8,
